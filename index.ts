@@ -1,0 +1,116 @@
+import { Dirent, existsSync, promises as fsPromises } from "fs";
+import { resolve, dirname } from "path";
+
+function ignoreNotfound(err: any) {
+  return err.code === "ENOENT" || err.code === "EISDIR" ? null : err;
+}
+
+function ignoreExists(err: any) {
+  return err.code === "EEXIST" ? null : err;
+}
+
+type WriteFileData = Parameters<typeof fsPromises.writeFile>[1];
+export async function writeFile(
+  path: string,
+  data: WriteFileData,
+  encoding?: BufferEncoding
+) {
+  await ensuredir(dirname(path));
+  return fsPromises.writeFile(path, data, encoding);
+}
+
+export function readFile(path: string, encoding?: BufferEncoding) {
+  return fsPromises.readFile(path, encoding).catch(ignoreNotfound);
+}
+
+export function stat(path: string) {
+  return fsPromises.stat(path).catch(ignoreNotfound);
+}
+
+export function unlink(path: string) {
+  return fsPromises.unlink(path).catch(ignoreNotfound);
+}
+
+export function readdir(dir: string): Promise<Dirent[]> {
+  return fsPromises
+    .readdir(dir, { withFileTypes: true })
+    .catch(ignoreNotfound)
+    .then((r) => r || []);
+}
+
+export async function ensuredir(dir: string) {
+  if (existsSync(dir)) {
+    return;
+  }
+  await ensuredir(dirname(dir)).catch(ignoreExists);
+  await fsPromises.mkdir(dir).catch(ignoreExists);
+}
+
+export async function readdirRecursive(
+  dir: string,
+  ignore?: (p: string) => boolean
+) {
+  if (ignore && ignore(dir)) {
+    return [];
+  }
+  const entries: Dirent[] = await readdir(dir);
+  const files: string[] = [];
+  await Promise.all(
+    entries.map(async (entry) => {
+      const entryPath = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        const dirFiles = await readdirRecursive(entryPath, ignore);
+        files.push(...dirFiles.map((f) => entry.name + "/" + f));
+      } else {
+        if (!(ignore && ignore(entry.name))) {
+          files.push(entry.name);
+        }
+      }
+    })
+  );
+  return files;
+}
+export async function readdirRecursiveNew(
+     dir: string,
+  ignore?: (p: string) => boolean
+) {
+  if (ignore && ignore(dir)) {
+    return [];
+  }
+  const entries: Dirent[] = await readdir(dir);
+  const tasks = entries.map(async (entry) => {
+    const entryPath = resolve(dir, entry.name);
+    if (entry.isDirectory()) {
+      const dirFiles = await readdirRecursive(entryPath, ignore);
+      return dirFiles.map((f) => entry.name + "/" + f);
+    } else {
+      return (ignore && ignore(entry.name)) ? [] : [entry.name];
+    }
+  });
+  const nestedFiles = await Promise.all(tasks);
+  const files = nestedFiles.flat();
+  return files;
+}
+export async function rmRecursive(dir: string) {
+  const entries = await readdir(dir);
+  await Promise.all(
+    entries.map((entry) => {
+      const entryPath = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        return rmRecursive(entryPath).then(() => fsPromises.rmdir(entryPath));
+      } else {
+        return fsPromises.unlink(entryPath);
+      }
+    })
+  );
+}
+
+async function main(){
+console.time("current")
+const a=await readdirRecursive("./images")
+console.timeEnd("current")
+console.time("PR")
+const b =await readdirRecursiveNew("./images")
+console.timeEnd("PR")
+}
+main()
